@@ -60,7 +60,7 @@ To quit the application at any time, press `Ctrl+C`.
 **Command:**
 
 ```bash
-[Expert@FW-EXT:0]# ./cpmtr.py google.com
+[Expert@NGFW:0]# ./cpmtr.py google.com
 ```
 
 **Output:**
@@ -77,4 +77,4 @@ Host                           Loss%    Snt   Last    Avg   Best   Wrst
 
 ## Disclaimer
 
-This is an unofficial tool and is not affiliated with or supported by Check Point Software Technologies Ltd. Use at your own risk.
+This is an unofficial tool and is not affiliated with or supported by Check Point Software Technologies Ltd.
