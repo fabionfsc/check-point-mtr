@@ -23,14 +23,14 @@ def discover_hops(destination, max_hops):
         proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         stdout, stderr = proc.communicate(timeout=60)
 
-        if proc.returncode != 0 and stderr and "Unsupported" in stderr:
+        if proc.returncode != 0 and stderr and ("Unsupported" in stderr or "Cannot set" in stderr):
             command = ['traceroute', '-I', '-n', '-q', '1', '-w', '2', '-m', str(max_hops), destination]
             proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             stdout, _ = proc.communicate(timeout=60)
 
         ip_regex = re.compile(r'\s*(\d+\.\d+\.\d+\.\d+)\s*')
         
-        last_ip_added = None
+        last_ip = None
         for line in stdout.splitlines():
             if not line.strip() or not line.lstrip()[0].isdigit():
                 continue
@@ -38,37 +38,33 @@ def discover_hops(destination, max_hops):
             match = ip_regex.search(line)
             if match:
                 current_ip = match.group(1)
-                # Se o traceroute retornar o próprio IP de origem, pode pular
-                if len(hops) == 0 and current_ip == socket.gethostbyname(socket.gethostname()):
+                if len(hops) == 0 and match.group(1) == socket.gethostbyname(socket.gethostname()):
                     continue
-                if current_ip != last_ip_added:
+                if current_ip != last_ip:
                     hops.append(current_ip)
-                    last_ip_added = current_ip
+                    last_ip = current_ip
             else:
-                if last_ip_added != '*':
+                if last_ip != '*':
                     hops.append('*')
-                    last_ip_added = '*'
+                    last_ip = '*'
         
         if hops and hops[-1] != destination:
             if any(h == destination for h in hops):
                 while hops and hops[-1] != destination:
                     hops.pop()
-            else:
-                # Adiciona o destino se a rota não o alcançou
-                if hops[-1] != '*':
-                    hops.append(destination)
-
+            elif not any(h == '*' for h in hops):
+                hops.append(destination)
 
     except FileNotFoundError:
         print("Error: 'traceroute' command not found. Aborting.", file=sys.stderr)
         sys.exit(1)
     except subprocess.TimeoutExpired:
-        print("Error: 'traceroute' timed out. Please check connectivity.", file=sys.stderr)
+        print("Error: 'traceroute' timed out. The network might be very slow or a hop is unresponsive.", file=sys.stderr)
         sys.exit(1)
     except Exception as e:
         print(f"Unexpected error during traceroute: {e}", file=sys.stderr)
         sys.exit(1)
-    
+
     return hops
 
 def ping_host(ip):
@@ -93,9 +89,10 @@ def main(destination):
         print(f"Error: Could not resolve host: {destination}", file=sys.stderr)
         sys.exit(1)
 
+    print("Discovering route, please wait...")
     hops_ips = discover_hops(dest_ip, DEFAULT_MAX_HOPS)
     if not hops_ips:
-        print("Error: Could not discover route.", file=sys.stderr)
+        print("Error: Could not discover any route to the destination.", file=sys.stderr)
         sys.exit(1)
         
     hops_stats = [{
@@ -125,12 +122,13 @@ def main(destination):
 
             for i, stats in enumerate(hops_stats):
                 host_display = stats['ip']
-                if host_display == '*':
-                    hop_str = f" {i+1}. ???"
-                    print(f"{hop_str:<28}")
-                    continue
-
                 hop_str = f" {i+1}. {host_display}"
+
+                if host_display == '*':
+                    loss_str = "100.0"
+                    print(f"{hop_str:<28}{loss_str:>7}%{stats['sent']:>5}{'':>28}")
+                    continue
+                
                 loss_str = f"{stats['lost']/stats['sent']*100 if stats['sent']>0 else 0.0:.1f}"
                 avg = statistics.mean(stats['rtts']) if stats['rtts'] else 0.0
                 
