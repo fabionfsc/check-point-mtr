@@ -16,39 +16,48 @@ INTERVAL = 1 # Seconds
 
 def discover_hops(destination, max_hops):
     """Discovers hops using the system's traceroute command."""
-    command = ['traceroute', '-n', '-m', str(max_hops), destination]
+    command = ['traceroute', '-n', '-q', '1', '-w', '2', '-m', str(max_hops), destination]
     hops = []
     
     try:
         proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         stdout, stderr = proc.communicate(timeout=60)
 
-        if proc.returncode != 0 and stderr and "Unsupported Werror" in stderr:
-            command = ['traceroute', '-I', '-n', '-m', str(max_hops), destination]
+        if proc.returncode != 0 and stderr and "Unsupported" in stderr:
+            command = ['traceroute', '-I', '-n', '-q', '1', '-w', '2', '-m', str(max_hops), destination]
             proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             stdout, _ = proc.communicate(timeout=60)
 
         ip_regex = re.compile(r'\s*(\d+\.\d+\.\d+\.\d+)\s*')
         
+        last_ip_added = None
         for line in stdout.splitlines():
             if not line.strip() or not line.lstrip()[0].isdigit():
                 continue
 
             match = ip_regex.search(line)
             if match:
+                current_ip = match.group(1)
                 # Se o traceroute retornar o próprio IP de origem, pode pular
-                if len(hops) == 0 and match.group(1) == socket.gethostbyname(socket.gethostname()):
+                if len(hops) == 0 and current_ip == socket.gethostbyname(socket.gethostname()):
                     continue
-                hops.append(match.group(1))
+                if current_ip != last_ip_added:
+                    hops.append(current_ip)
+                    last_ip_added = current_ip
             else:
-                hops.append('*')
+                if last_ip_added != '*':
+                    hops.append('*')
+                    last_ip_added = '*'
         
         if hops and hops[-1] != destination:
-             if any(h == destination for h in hops):
-                 while hops[-1] != destination:
-                     hops.pop()
-             else:
-                 hops.append(destination)
+            if any(h == destination for h in hops):
+                while hops and hops[-1] != destination:
+                    hops.pop()
+            else:
+                # Adiciona o destino se a rota não o alcançou
+                if hops[-1] != '*':
+                    hops.append(destination)
+
 
     except FileNotFoundError:
         print("Error: 'traceroute' command not found. Aborting.", file=sys.stderr)
@@ -59,10 +68,7 @@ def discover_hops(destination, max_hops):
     except Exception as e:
         print(f"Unexpected error during traceroute: {e}", file=sys.stderr)
         sys.exit(1)
-
-    if len(hops) > 1 and hops[-1] == hops[-2]:
-        hops.pop()
-        
+    
     return hops
 
 def ping_host(ip):
@@ -87,7 +93,7 @@ def main(destination):
         print(f"Error: Could not resolve host: {destination}", file=sys.stderr)
         sys.exit(1)
 
-    hops_ips = discover_hops(destination, DEFAULT_MAX_HOPS)
+    hops_ips = discover_hops(dest_ip, DEFAULT_MAX_HOPS)
     if not hops_ips:
         print("Error: Could not discover route.", file=sys.stderr)
         sys.exit(1)
@@ -114,20 +120,18 @@ def main(destination):
                     stats['last'] = 0.0
 
             os.system('clear' if os.name == 'posix' else 'cls')
-            print(f" cpmtr v0.1                                                    {destination} ({dest_ip})")
-            # --- CABEÇALHO CORRIGIDO ---
+            print(f" cpmtr v0.1                                               {destination} ({dest_ip})")
             print(f"{'Host':<28}{'Loss%':>7}{'Snt':>6}{'Last':>7}{'Avg':>7}{'Best':>7}{'Wrst':>7}")
 
             for i, stats in enumerate(hops_stats):
                 host_display = stats['ip']
                 if host_display == '*':
-                     hop_str = f" {i+1}. ???"
-                     print(f"{hop_str:<28}")
-                     continue
+                    hop_str = f" {i+1}. ???"
+                    print(f"{hop_str:<28}")
+                    continue
 
-                # --- LINHA DE DADOS CORRIGIDA ---
                 hop_str = f" {i+1}. {host_display}"
-                loss_str = f"{stats['lost']/stats['sent']*100 if stats['sent']>0 else 0.0:.1f}%"
+                loss_str = f"{stats['lost']/stats['sent']*100 if stats['sent']>0 else 0.0:.1f}"
                 avg = statistics.mean(stats['rtts']) if stats['rtts'] else 0.0
                 
                 print(f"{hop_str:<28}"
